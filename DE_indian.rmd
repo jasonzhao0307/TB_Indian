@@ -1,0 +1,1199 @@
+---
+title: "Evaluation of published TB signatures and Indian TB/LTBI signature"
+author:
+- Samantha Leong, Yue Zhao, W. Evan Johnson, Padmini Salgame
+- Computational Biomedicine, Boston University
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output:
+  html_document: default
+  html_notebook: default
+---
+
+##### Note: Please click the "Code" button in upper right corner, and choose "Hide All Code"
+
+
+### Introduction
+
+* Notations:
+    + control: Not progressed latent TB infected (LTBI)
+    + IC: Already progressed  
+* Data:
+    + Indian 1: 16 controls, 16 IC
+    + Indian 2: 12 IC
+    + In total: 16 controls, 28 IC
+* Reference Signatures
+    + jacobsen2007_3gene
+    + sweeney2016_3gene
+    + berry2010_393gene
+    + berry2010_86gene
+    + zak2016_16gene
+
+### Plan
+* Process RNA-seq data
+* EDA(PCA)
+* Differential expression analysis
+* compare the DEGs under different cut-offs with published signatures
+* Normalize the data using deseq
+* correct the gender batch using combat
+* test the unsupervised clustering performance using published signatures (PCA, tSNE, MDS)
+* Use LOO Jackknife to compare the AUC between signatures
+
+#### Load Name.RData
+```{r}
+# All data and .RData are stored outside of this github folder.
+# Skip thsi step if run for the first time
+load("../TBI.RData")
+
+# Also, before leaving the current environment, do:
+# save.image("../TBI.RData")
+
+```
+
+
+
+
+#Load packages
+
+```{r message=FALSE}
+#library
+library(ggplot2)
+library(DESeq2)
+library(sva)
+library(pheatmap)
+library(tsne)
+library(Rtsne)
+require(bioDist)
+require(glmnet)
+require(readr)
+#load R_lib_jason
+library(R.utils)
+require(boot)
+require(gmodels)
+sourceDirectory("../../R_lib_jason/", modifiedOnly=TRUE)
+```
+
+
+
+### EDA: exploratory data analysis
+
+```{r, message=FALSE}
+
+#load the signatures
+
+jacobsen2007_3gene <- c('CD64', 'LTF', 'Rab33A')
+#CD64 should be FCGR1A, Rab33A should be RAB33A
+jacobsen2007_3gene <- c('FCGR1A', 'LTF', 'RAB33A')
+
+sweeney2016_3gene <- c('GBP5', 'DUSP3', 'KLF2')
+tmp <- read.table("../data/tmp.txt", header = F, stringsAsFactors = F)
+berry2010_393gene <- tmp$V1
+tmp <- read.table("../data/tmp2.txt", header = F, stringsAsFactors = F)
+berry2010_86gene <- tmp$V1
+zak2016_16gene <- c('ANKRD22','APOL1','BATF2','ETV7','FCGR1A','FCGR1B','GBP1','GBP2','GBP4','GBP5','SCARF1','SEPT4','SERPING1','STAT1','TAP1','TRAFD1')
+
+
+#Differential Expression
+
+
+
+#First, load the data and make sure it's formatted well
+#Indian data
+CountsIndian <- read.table("../data/count_Indian_old.txt",header=TRUE,row.names=1)
+CountsIndian2 <- read.table("../data/count_Indian_new.txt",header=TRUE,row.names=1)
+
+
+#gender
+genderIndianDF <- read.csv("../data/id_gender_india.txt", sep = "\t", header = F)
+
+# Indian data adjustment and get the group info
+# group A is acticve patients, and group B is their family
+tmpVector <- c()
+for (i in seq(1,32,1)) {
+  if (substr(colnames(CountsIndian[i]),1,1) == "A"){
+    tmpVector = c(tmpVector, i)
+  }
+}
+CountsIndian <- cbind(CountsIndian[,tmpVector], CountsIndian[,-tmpVector])
+treatmentsIndian <- c(rep("IC", 16), rep("control",16))
+
+
+shortname <- c()
+for (i in 1:32){
+  tmp_id <- strsplit(colnames(CountsIndian)[i], ".", fixed = TRUE)[[1]][1]
+  tmp_id_vec <- strsplit(tmp_id, "")[[1]]
+  tmp_id_vec[2] <- "0"
+
+  tmp_id <- paste(tmp_id_vec, collapse = "")
+  shortname <- c(shortname, tmp_id)
+}
+colnames(CountsIndian) <- shortname
+
+genderIndian <- c()
+for (i in 1:32){
+  id <- colnames(CountsIndian)[i]
+  genderIndian <- c(genderIndian, as.character(genderIndianDF$V2[genderIndianDF$V1 == id]))
+}
+genderIndian[33:44] <- c("Female","Female","Male", "Female","Male", "Male", "Male", "Male", "Female","Male", "Male", "Female")
+colnames(fullIndian)[33:44] <- c("10200010A-Female", "10200288A-Female", "10200082A-Male", "10200074A-Female", "10200060A-Male", "10200023A-Male", "10200140A-Male", "10200111A-Male", "10200112A-Female", "10200016A-Male", "10200015A-Male", "10200087A-Female")
+
+for (i in 1:32){
+  colnames(CountsIndian)[i] = paste(colnames(CountsIndian)[i], genderIndian[i], sep = "-")
+}
+
+# combine part 1 and part 2 data
+fullIndian <- cbind(CountsIndian, CountsIndian2)
+treatmentsIndian <- c(rep("IC", 16), rep("control", 16), rep("IC", 12))
+
+#pre-filter
+IndianData <- fullIndian[rowSums(fullIndian) > 20,]
+```
+
+
+### PCA Before Batch Adjust {.tabset}
+#### PCA on raw counts
+```{r, message=FALSE}
+#PCA from raw counts (naive approach)
+plot_PCA_new(IndianData, condition = treatmentsIndian, useVST = FALSE, pointSize = 4, useLabel = F)
+plot_PCA_new(IndianData, condition = treatmentsIndian, useVST = FALSE, pointSize = 3, useLabel = T)
+plot_PCA_new(IndianData, condition = genderIndian, useVST = FALSE, pointSize = 4, useLabel = F)
+plot_PCA_new(IndianData, condition = genderIndian, useVST = FALSE, pointSize = 3, useLabel = T)
+
+
+#pdf
+#plot_PCA_new(IndianData, condition = treatmentsIndian, useVST = FALSE, pointSize = 4, useLabel = F ,outputPDF = T, outputName = "PCA_raw.pdf", title = "Raw data PCA plot")
+```
+
+
+
+#### PCA on deseq2_RLE normalization
+```{r, message=FALSE}
+#BSN: between sample normalization
+#RLE: relative log expression method from DESeq2
+IndianData_rle <- deseq2_norm_rle(IndianData)
+#write.csv(IndianData_rle, "../normalized_counts_matrix.csv",quote = F)
+
+#plot
+plot_PCA_new(IndianData_rle, condition = treatmentsIndian, useVST = FALSE, pointSize = 4, useLabel = F)
+plot_PCA_new(IndianData_rle, condition = treatmentsIndian, useVST = FALSE, pointSize = 3, useLabel = T)
+plot_PCA_new(IndianData_rle, condition = genderIndian, useVST = FALSE, pointSize = 4, useLabel = F)
+plot_PCA_new(IndianData_rle, condition = genderIndian, useVST = FALSE, pointSize = 3, useLabel = T)
+```
+#### PCA on log2-transformation on raw counts
+```{r, message=FALSE}
+
+IndianData_log2 <- log2(IndianData + 0.1)
+
+#plot
+plot_PCA_new(IndianData_log2, condition = treatmentsIndian, useVST = FALSE, pointSize = 4, useLabel = F)
+plot_PCA_new(IndianData_log2, condition = treatmentsIndian, useVST = FALSE, pointSize = 3, useLabel = T)
+plot_PCA_new(IndianData_log2, condition = genderIndian, useVST = FALSE, pointSize = 4, useLabel = F)
+plot_PCA_new(IndianData_log2, condition = genderIndian, useVST = FALSE, pointSize = 3, useLabel = T)
+```
+
+#### PCA from RLE and then log2 transform
+```{r, message=FALSE}
+#PCA from RLE and then log2 transform: found 4 outliers
+IndianData_rle <- deseq2_norm_rle(IndianData)
+IndianData_rle_log2 <- log2(IndianData_rle + 0.1)
+
+#plot
+plot_PCA_new(IndianData_rle_log2, condition = treatmentsIndian, useVST = FALSE, pointSize = 4, useLabel = F)
+plot_PCA_new(IndianData_rle_log2, condition = treatmentsIndian, useVST = FALSE, pointSize = 3, useLabel = T)
+plot_PCA_new(IndianData_rle_log2, condition = genderIndian, useVST = FALSE, pointSize = 4, useLabel = F)
+plot_PCA_new(IndianData_rle_log2, condition = genderIndian, useVST = FALSE, pointSize = 3, useLabel = T)
+```
+
+
+#### PCA from raw counts: remove outliers
+```{r, message=FALSE}
+#PCA from raw counts: remove outliers
+plot_PCA_new(IndianData[,-c(37,44,34,41)], condition = treatmentsIndian[-c(37,44,34,41)], useVST = FALSE, pointSize = 4, useLabel = F)
+plot_PCA_new(IndianData[,-c(37,44,34,41)], condition = treatmentsIndian[-c(37,44,34,41)], useVST = FALSE, pointSize = 3, useLabel = T)
+plot_PCA_new(IndianData[,-c(37,44,34,41)], condition = genderIndian[-c(37,44,34,41)], useVST = FALSE, pointSize = 4, useLabel = F)
+plot_PCA_new(IndianData[,-c(37,44,34,41)], condition = genderIndian[-c(37,44,34,41)], useVST = FALSE, pointSize = 3, useLabel = T)
+
+```
+
+#### PCA from rle deseq normalized counts: remove outliers
+```{r, message=FALSE}
+#PCA from rle deseq normalized counts: remove outliers
+plot_PCA_new(IndianData_rle[,-c(37,44,34,41)], condition = treatmentsIndian[-c(37,44,34,41)], useVST = FALSE, pointSize = 4, useLabel = F)
+plot_PCA_new(IndianData_rle[,-c(37,44,34,41)], condition = treatmentsIndian[-c(37,44,34,41)], useVST = FALSE, pointSize = 3, useLabel = T)
+plot_PCA_new(IndianData_rle[,-c(37,44,34,41)], condition = genderIndian[-c(37,44,34,41)], useVST = FALSE, pointSize = 4, useLabel = F)
+plot_PCA_new(IndianData_rle[,-c(37,44,34,41)], condition = genderIndian[-c(37,44,34,41)], useVST = FALSE, pointSize = 3, useLabel = T)
+
+```
+
+#### PCA from rle deseq normalized counts: remove outliers + top 500 genes
+```{r, message=FALSE}
+#PCA from rle deseq normalized counts: remove outliers
+plot_PCA_new(IndianData_rle[,-c(37,44,34,41)], condition = treatmentsIndian[-c(37,44,34,41)], useVST = FALSE, pointSize = 4, useLabel = F, useAllFeature = FALSE, nFeature = 500)
+plot_PCA_new(IndianData_rle[,-c(37,44,34,41)], condition = treatmentsIndian[-c(37,44,34,41)], useVST = FALSE, pointSize = 3, useLabel = T, useAllFeature = FALSE, nFeature = 500)
+plot_PCA_new(IndianData_rle[,-c(37,44,34,41)], condition = genderIndian[-c(37,44,34,41)], useVST = FALSE, pointSize = 4, useLabel = F, useAllFeature = FALSE, nFeature = 500)
+plot_PCA_new(IndianData_rle[,-c(37,44,34,41)], condition = genderIndian[-c(37,44,34,41)], useVST = FALSE, pointSize = 3, useLabel = T, useAllFeature = FALSE, nFeature = 500)
+
+```
+
+
+#### PCA from log2-tranformed counts: remove outliers
+```{r, message=FALSE}
+#PCA from log2-transformed counts: remove outliers
+plot_PCA_new(IndianData_log2[,-c(37,44,34,41)], condition = treatmentsIndian[-c(37,44,34,41)], useVST = FALSE, pointSize = 4, useLabel = F)
+plot_PCA_new(IndianData_log2[,-c(37,44,34,41)], condition = treatmentsIndian[-c(37,44,34,41)], useVST = FALSE, pointSize = 3, useLabel = T)
+plot_PCA_new(IndianData_log2[,-c(37,44,34,41)], condition = genderIndian[-c(37,44,34,41)], useVST = FALSE, pointSize = 4, useLabel = F)
+plot_PCA_new(IndianData_log2[,-c(37,44,34,41)], condition = genderIndian[-c(37,44,34,41)], useVST = FALSE, pointSize = 3, useLabel = T)
+
+```
+
+
+#### PCA from log2-tranformed deseq normalized counts: remove outliers
+```{r, message=FALSE}
+plot_PCA_new(IndianData_rle_log2[,-c(37,44,34,41)], condition = treatmentsIndian[-c(37,44,34,41)], useVST = FALSE, pointSize = 4, useLabel = F)
+plot_PCA_new(IndianData_rle_log2[,-c(37,44,34,41)], condition = treatmentsIndian[-c(37,44,34,41)], useVST = FALSE, pointSize = 3, useLabel = T)
+plot_PCA_new(IndianData_rle_log2[,-c(37,44,34,41)], condition = genderIndian[-c(37,44,34,41)], useVST = FALSE, pointSize = 4, useLabel = F)
+plot_PCA_new(IndianData_rle_log2[,-c(37,44,34,41)], condition = genderIndian[-c(37,44,34,41)], useVST = FALSE, pointSize = 3, useLabel = T)
+
+```
+
+
+
+#### VST on Indian Dataset
+```{r, message=FALSE}
+#use all genes
+plot_PCA_new(sampleDataFrame = IndianData,condition = genderIndian)
+
+#use top high variance 1000 genes
+plot_PCA_new(sampleDataFrame = IndianData,condition = genderIndian, useAllFeature = FALSE, nFeature = 1000, title = "PCA plot for top 1k high variance genes")
+
+#use all genes
+plot_PCA_new(sampleDataFrame = IndianData,condition = treatmentsIndian)
+
+
+#use top high variance 1000 genes
+plot_PCA_new(sampleDataFrame = IndianData,condition = treatmentsIndian, useAllFeature = FALSE, nFeature = 1000, title = "PCA plot for top 1k high variance genes")
+
+
+
+```
+
+
+#### VST on Indian Dataset: remove outliers
+```{r, message=FALSE}
+#use all genes
+plot_PCA_new(sampleDataFrame = IndianData[,-c(37,44,34,41)],condition = genderIndian[-c(37,44,34,41)])
+
+#use top high variance 1000 genes
+plot_PCA_new(sampleDataFrame = IndianData[,-c(37,44,34,41)],condition = genderIndian[-c(37,44,34,41)], useAllFeature = FALSE, nFeature = 1000, title = "PCA plot for top 1k high variance genes")
+
+#use all genes
+plot_PCA_new(sampleDataFrame = IndianData[,-c(37,44,34,41)],condition = treatmentsIndian[-c(37,44,34,41)])
+
+
+#use top high variance 1000 genes
+plot_PCA_new(sampleDataFrame = IndianData[,-c(37,44,34,41)],condition = treatmentsIndian[-c(37,44,34,41)], useAllFeature = FALSE, nFeature = 1000, title = "PCA plot for top 1k high variance genes")
+
+
+
+```
+
+
+
+### Summary from the EDA
+* filter the genes with max read counts less or equal to 20.
+* 4 outliers:10200060A-Male, 10200087A-Female,10200288A-Female,10200112A-Female  
+* We compared the effects of using deseq rle normalization, log-2 transformation, rle-log2 method, variance-stablizing-transformation, with or without top high variance genes, with or without outliers removal.  
+* The best approach for now: deseq rle normalization + full genes + 4 outliers removal.  
+* After read max count filtering for genes and sample outliers removal.  
+
+
+
+### Differential Expression
+
+```{r message=FALSE}
+#Differential Expression
+
+#remove the outliers
+IndianData_filtered <- IndianData[,-c(37,44,34,41)]
+genderIndian_filtered <- genderIndian[-c(37,44,34,41)]
+treatmentsIndian_filtered <- treatmentsIndian[-c(37,44,34,41)]
+
+
+
+
+# dds structure
+colDataIndian <- data.frame(condition = treatmentsIndian_filtered, gender = genderIndian_filtered)
+rownames(colDataIndian) <- colnames(IndianData_filtered)
+#Add gender info later when available
+ddsIndian <- DESeqDataSetFromMatrix(countData = IndianData_filtered,
+                                colData = colDataIndian,
+                                design = ~ condition + gender)
+ddsIndian <- estimateSizeFactors(ddsIndian)
+```
+
+
+
+
+
+### DE summary
++ We used DEseq2 for DE analysis, adjusted the gender covariate in DESeq2
++ Cut-off: BH adjusted p-value < 1e-6
++ Africa: 387 up-regulated DEGs, 78 down-regulated DEGs
++ Brazil:  up-regulated DEGs,  down-regulated DEGs
+
+
+
+```{r message=FALSE}
+
+#DE Indian
+ddsIndian$condition <- relevel(ddsIndian$condition, ref="control")
+ddsIndian <- DESeq(ddsIndian)
+resIndian <- results(ddsIndian,contrast=c("condition","IC","control"))
+
+resIndianOrdered <- resIndian[order(resIndian$padj),]
+summary(resIndian)
+
+
+absentGene <- berry2010_393gene[!(berry2010_393gene %in% fullGene)]
+write.csv(absentGene, "../51gene.csv", row.names = F, col.names = F)
+
+
+
+#duplicated gene in berry2010
+duplicate_393 <- berry2010_393gene[which(duplicated(berry2010_393gene))]
+duplicate_86 <- berry2010_86gene[which(duplicated(berry2010_86gene))]
+
+
+
+
+###############################################################
+#overlap between 5 signatures and full Gene
+fullGene <- rownames(CountsIndian2)
+
+#total: 27, hit 24
+length(intersect(fullGene, Kaforou.27))
+
+#hit: 3, 100%
+length(intersect(fullGene, jacobsen2007_3gene))
+
+#hit: 3, 100%
+length(intersect(fullGene, sweeney2016_3gene))
+
+#hit: 16, 100%
+length(intersect(fullGene, zak2016_16gene))
+
+#total: 376, hit 266. For now, just take 266 as full signature.
+length(intersect(fullGene, berry2010_393gene))
+
+#total: 82, hit 65, just take 65 as full signature.
+length(intersect(fullGene, berry2010_86gene))
+
+#######################################################################################
+#parameters:
+n <- 20
+
+#Plot the percentage of overlapping vs. padj cut-off
+jacobsen2007_3gene_vec <- c()
+sweeney2016_3gene_vec <- c()
+zak2016_16gene_vec <- c()
+berry2010_393gene_vec <- c()
+berry2010_86gene_vec <- c()
+kaforou_27gene_vec <- c()
+
+jacobsen2007_3gene_list <- list()
+sweeney2016_3gene_list <- list()
+zak2016_16gene_list <- list()
+berry2010_393gene_list <- list()
+berry2010_86gene_list <- list()
+kaforou_27gene_list <- list()
+
+DEG_list <- list()
+
+numGene <- c()
+
+for (i in 1:n) {
+  resSigTmp <- subset(resIndianOrdered, padj < 10**(-i))
+  DEG_tmp <- rownames(resSigTmp)
+  numGene <- c(numGene, length(DEG_tmp))
+  jacobsen2007_3gene_list[[i]] <- intersect(DEG_tmp, jacobsen2007_3gene)
+  sweeney2016_3gene_list[[i]] <- intersect(DEG_tmp, sweeney2016_3gene)
+  zak2016_16gene_list[[i]] <- intersect(DEG_tmp, zak2016_16gene)
+  berry2010_393gene_list[[i]] <- intersect(DEG_tmp, berry2010_393gene)
+  berry2010_86gene_list[[i]] <- intersect(DEG_tmp, berry2010_86gene)
+  kaforou_27gene_list[[i]] <- intersect(DEG_tmp, Kaforou.27)
+
+  DEG_list[[i]] <- DEG_tmp
+  write.table(DEG_tmp, file = paste("../data/DEG", i, ".txt", sep = "-"), row.names = F, col.names = F)
+
+  jacobsen2007_3gene_vec <- c(jacobsen2007_3gene_vec, length(intersect(DEG_tmp, jacobsen2007_3gene))/3)
+  sweeney2016_3gene_vec <- c(sweeney2016_3gene_vec, length(intersect(DEG_tmp, sweeney2016_3gene))/3)
+  zak2016_16gene_vec <- c(zak2016_16gene_vec, length(intersect(DEG_tmp, zak2016_16gene))/16)
+  berry2010_393gene_vec <- c(berry2010_393gene_vec, length(intersect(DEG_tmp, berry2010_393gene))/266)
+  berry2010_86gene_vec <- c(berry2010_86gene_vec, length(intersect(DEG_tmp, berry2010_86gene))/65)
+  kaforou_27gene_vec <- c(kaforou_27gene_vec, length(intersect(DEG_tmp, Kaforou.27))/24)
+}
+
+percentage <- c(jacobsen2007_3gene_vec, sweeney2016_3gene_vec, zak2016_16gene_vec, berry2010_393gene_vec, berry2010_86gene_vec, kaforou_27gene_vec)
+name <- c(rep("Jacobsen 3gene",n), rep("Sweeney 3genes",n), rep("Zak 16genes",n), rep("Berry 393genes",n), rep("Berry 86genes",n), rep("Kaforou 27genes",n))
+cutoff <- c(rep(1:n, 6))
+df_percent <- data.frame(percentage, name, cutoff)
+
+
+ggplot(data = df_percent, aes(x = cutoff, y = percentage, color = name)) + geom_point() + geom_line() + labs(list(title = "Indian Data DE Genes Overlap", x = "DE analysis cut-off, padj < 10e-x", y = "Percentage overlapped")) + scale_x_discrete(limits=c(seq(1,n,1))) + ylim(0,1) + theme(text = element_text(size=10)) +  ggtitle("Indian Data DE Genes Overlap") + theme(plot.title = element_text(hjust = 0.5))
+
+
+pdf("overlap.pdf", width = 12, height = 10)
+ggplot(data = df_percent, aes(x = cutoff, y = percentage, color = name)) + geom_point() + geom_line() + labs(list(title = "Indian Data DE Genes Overlap", x = "DE analysis cut-off, padj < 10e-x", y = "Percentage overlapped")) + scale_x_discrete(limits=c(seq(1,n,1))) + ylim(0,1) + theme(text = element_text(size=20)) +  ggtitle("Indian Data DE Genes Overlap") + theme(plot.title = element_text(hjust = 0.5))
+dev.off()
+
+plot(numGene, ylim = c(0,10000), main = "Number of DEGs with different cut-offs", xlab = "DE analysis cut-off, padj < 10e-x", ylab = "Gene Number")
+axis(side=1, at=c(1:n))
+text(x = seq(1,n,1), y = numGene, labels = numGene, pos = 3, cex = 0.9)
+lines(numGene)
+
+pdf("DE gene number.pdf", width = 12, height = 10)
+plot(numGene, ylim = c(0,10000), main = "Number of DEGs with different cut-offs", xlab = "DE analysis cut-off, padj < 10e-x", ylab = "Gene Number")
+axis(side=1, at=c(1:n))
+text(x = seq(1,n,1), y = numGene, labels = numGene, pos = 3, cex = 0.9)
+lines(numGene)
+dev.off()
+
+
+```
+
+
+
+### Heatmap for DE genes
+* Cut-off: padj < 0.01, |LFC| > 1
+```{r message=FALSE}
+library(RColorBrewer)
+
+#We already get the deseq_rle_normalized data: IndianData_rle
+# remove the outliers:
+IndianData_final <- IndianData_rle[,-c(37,44,34,41)]
+
+colnames(IndianData_final)[5] <- "A000136-Male-relapse"
+colnames(IndianData_final)[38] <- "10200111A-Male-fail"
+
+labelIndianData_final <- c(rep("TB", 16), rep("control", 16), rep("TB", 8))
+
+
+
+##################################################
+#DE genes heatmap using normlized data, p-value < 1e-2
+####################################################
+
+
+resSig <- subset(resIndianOrdered, padj < 1e-2)
+resSig.up <- subset(resSig, log2FoldChange > 1)
+resSig.down <- subset(resSig, log2FoldChange < -1)
+up <- rownames(resSig.up)
+down <- rownames(resSig.down)
+DEG_tmp <- c(up, down)
+
+
+plot_pheatmap(IndianData_final[DEG_tmp,], labelIndianData_final,colorGroup = c(TB = "red", control = "green"), title = "Row-scaled Log2-transformed DEG (p-value<1e-2) Heatmap", log2Trans = T, rowScaling = T, showRowName = F, showColName = F, outputPDF = T, outputName = "DEG_1e-2_heatmap.pdf", height = 8, width = 9)
+
+
+##################################################
+#DE genes heatmap using normlized data, p-value < 1e-10
+####################################################
+
+
+resSig.1e10 <- subset(resIndianOrdered, padj < 1e-10)
+resSig.up.1e10 <- subset(resSig.1e10, log2FoldChange > 1)
+resSig.down.1e10 <- subset(resSig.1e10, log2FoldChange < -1)
+up.1e10 <- rownames(resSig.up.1e10)
+down.1e10 <- rownames(resSig.down.1e10)
+DEG.1e10 <- c(up.1e10, down.1e10)
+
+
+plot_pheatmap(IndianData_final[DEG.1e11,], labelIndianData_final,colorGroup = c(TB = "red", control = "green"), title = "Row-scaled Log2-transformed DEG (p-value<1e-11) Heatmap", log2Trans = T, rowScaling = T, showColName = F, outputPDF = T, outputName = "DEG_1e-11_heatmap.pdf", height = 10, width = 9)
+
+
+
+
+
+```
+
+
+
+
+```{r message=FALSE}
+# prepare gene list
+berry2010_393gene_exist <- intersect(fullGene, berry2010_393gene)
+berry2010_86gene_exist <- intersect(fullGene, berry2010_86gene)
+
+# some genes from berry 266, not in Indian_final,
+# as they are filtered before!
+filtered_gene_393 <- berry2010_393gene_exist[which(!(berry2010_393gene_exist %in% rownames(IndianData_final)))]
+
+berry2010_393gene_exist_overlap <- berry2010_393gene_exist[which(berry2010_393gene_exist %in% rownames(IndianData_final))]
+```
+
+
+
+
+
+### Quantitatively Evaluation of published signatures by Logistic Regression CV
+```{r message = FALSE}
+
+signatureNameALL <- c("Zak-16", "Jacobsen-3", "sweeney-3", "Berry-264", "Berry-65")
+metricNameAll <- c("AUC", "Accuracy","Pearson", "Kendall-Tau Distance")
+
+#Simple Logistic regression, no regularization
+###############
+
+
+LOOCV_zak16_simple <- LOOCV_Glmnet_simple(IndianData_final[zak2016_16gene,], labelIndianData_final, logisticRegression = TRUE, useAUC = TRUE, useHamming = TRUE, useKendallTau = TRUE)
+
+LOOCV_jacobsen3_simple <- LOOCV_Glmnet_simple(IndianData_final[jacobsen2007_3gene,], labelIndianData_final, logisticRegression = TRUE, useAUC = TRUE, useHamming = TRUE, useKendallTau = TRUE)
+
+LOOCV_sweeney3_simple <- LOOCV_Glmnet_simple(IndianData_final[sweeney2016_3gene,], labelIndianData_final, logisticRegression = TRUE,useAUC = TRUE, useHamming = TRUE, useKendallTau = TRUE)
+
+LOOCV_berry264_simple <- LOOCV_Glmnet_simple(IndianData_final[berry2010_393gene_exist_overlap,], labelIndianData_final, logisticRegression = TRUE, useAUC = TRUE, useHamming = TRUE, useKendallTau = TRUE)
+
+LOOCV_berry65_simple <- LOOCV_Glmnet_simple(IndianData_final[berry2010_86gene_exist,], labelIndianData_final, logisticRegression = TRUE, useAUC = TRUE, useHamming = TRUE, useKendallTau = TRUE)
+
+LOOCV_indian24_simple <- LOOCV_Glmnet_simple(IndianData_final[signature.lasso.multiple,], labelIndianData_final, logisticRegression = TRUE, useAUC = TRUE, useHamming = TRUE, useKendallTau = TRUE)
+
+output.loocv <- list(LOOCV_zak16_simple, LOOCV_jacobsen3_simple, LOOCV_sweeney3_simple, LOOCV_berry264_simple, LOOCV_berry65_simple)
+
+AUC_loocv <- sapply(output.loocv, function(x) x[1])
+ACC_loocv <- sapply(output.loocv, function(x) x[3])
+Tau_loocv <- sapply(output.loocv, function(x) x[4])
+df.loocv <- data.frame(AUC_loocv, ACC_loocv, Tau_loocv)
+colnames(df.loocv) <- c("AUC", "Accuracy", "Kendall Tau Distance")
+rownames(df.loocv) <- signatureNameALL
+
+write.csv(x = df.loocv, file = "../LOOCV_stat.csv")
+
+
+loocv.ggplot.df <- data.frame()
+count <- 1
+for (i in 1:nrow(df.loocv)){
+  for (j in 1:ncol(df.loocv)){
+    tmp <- c(round(df.loocv[i,j],3), colnames(df.loocv)[j], rownames(df.loocv)[i])
+    loocv.ggplot.df[count,1] <- tmp[1]
+    loocv.ggplot.df[count,2] <- tmp[2]
+    loocv.ggplot.df[count,3] <- tmp[3]   
+    count <- count + 1
+  }
+
+}
+colnames(loocv.ggplot.df) <- c("Value", "Metric", "Signature")
+
+
+#ggplot
+ggplot(data = loocv.ggplot.df,aes(x=Signature, y=Value, color=Metric)) + geom_point(size=6) + ggtitle("Comparion of TB signatures from leave-one-out cross-validation") + theme(plot.title = element_text(hjust = 0.5))
+ggsave("signatureComparison.pdf", width = 25, height = 20, units = "cm")
+
+
+
+
+
+
+
+
+
+
+
+
+
+#Ridge Logistic regression
+#####################
+# use labelIndianData_final
+
+set.seed(20)
+
+# LOOCV
+LOOCV_zak16 <- LOOCV_Glmnet_ridge(IndianData_final[zak2016_16gene,], labelIndianData_final, logisticRegression = TRUE, nfolds = 3, nTimes = 100, useAUC = TRUE, useHamming = TRUE, useKendallTau = TRUE)
+
+LOOCV_jacobsen3 <- LOOCV_Glmnet_ridge(IndianData_final[jacobsen2007_3gene,], labelIndianData_final, logisticRegression = TRUE, nfolds = 3, nTimes = 100, useAUC = TRUE, useHamming = TRUE, useKendallTau = TRUE)
+
+LOOCV_sweeney3 <- LOOCV_Glmnet_ridge(IndianData_final[sweeney2016_3gene,], labelIndianData_final, logisticRegression = TRUE, nfolds = 3, nTimes = 100, useAUC = TRUE, useHamming = TRUE, useKendallTau = TRUE)
+
+LOOCV_berry264 <- LOOCV_Glmnet_ridge(IndianData_final[berry2010_393gene_exist_overlap,], labelIndianData_final, logisticRegression = TRUE, nfolds = 3, nTimes = 100, useAUC = TRUE, useHamming = TRUE, useKendallTau = TRUE)
+
+LOOCV_berry65 <- LOOCV_Glmnet_ridge(IndianData_final[berry2010_86gene_exist,], labelIndianData_final, logisticRegression = TRUE, nfolds = 3, nTimes = 100, useAUC = TRUE, useHamming = TRUE, useKendallTau = TRUE)
+
+
+LOOCV_indian24 <- LOOCV_Glmnet_ridge(IndianData_final[signature.lasso.multiple,], labelIndianData_final, logisticRegression = TRUE, nfolds = 3, nTimes = 100, useAUC = TRUE, useHamming = TRUE, useKendallTau = TRUE)
+
+#
+LOOCV_result_list <- list(LOOCV_zak16, LOOCV_jacobsen3, LOOCV_sweeney3, LOOCV_berry264, LOOCV_berry65)
+meanAUC <- c()
+sdAUC <- c()
+meanAccuracy <- c()
+sdAccuracy <- c()
+meanKendallTauDistance <- c()
+sdKendallTauDistance <- c()
+
+
+
+for (i in 1:length(LOOCV_result_list)){
+  meanAUC[i] <- mean(LOOCV_result_list[[i]][[1]])
+  sdAUC[i] <- sd(LOOCV_result_list[[i]][[1]])
+  meanAccuracy[i] <- mean(LOOCV_result_list[[i]][[2]])
+  sdAccuracy[i] <- sd(LOOCV_result_list[[i]][[2]])
+  meanKendallTauDistance[i] <- mean(LOOCV_result_list[[i]][[4]])
+  sdKendallTauDistance[i] <- sd(LOOCV_result_list[[i]][[4]])
+}
+
+#get table for signature mean and sd in (AUC, acc, kendall-tau)
+LOOCV_result <- data.frame(meanAUC, sdAUC, meanAccuracy, sdAccuracy, meanKendallTauDistance, sdKendallTauDistance)
+rownames(LOOCV_result) <- c("Zak-16", "Jacobsen-3", "sweeney-3", "Berry-264", "Berry-65")
+write.csv(x = LOOCV_result, file = "../LOOCV_stat.csv")
+
+
+
+#prepare the df for ggplot
+signatureNameALL <- c("Zak-16", "Jacobsen-3", "sweeney-3", "Berry-264", "Berry-65")
+metricNameAll <- c("AUC", "Accuracy","Pearson", "Kendall-Tau Distance")
+
+LOOCV_result_ggplotDF <- data.frame()
+
+nCount = 1
+for (i in 1:length(LOOCV_result_list)){
+  for (j in c(1,2,4)){
+    for (k in 1:100){
+      LOOCV_result_ggplotDF[nCount,1] <- LOOCV_result_list[[i]][[j]][k]
+      LOOCV_result_ggplotDF[nCount,2] <- signatureNameALL[i]
+      LOOCV_result_ggplotDF[nCount,3] <- metricNameAll[j]
+      nCount <- nCount + 1
+    }
+  }
+}
+
+colnames(LOOCV_result_ggplotDF) <- c("MetricValue", "Signatures", "MetricName")
+LOOCV_result_ggplotDF$Signatures <- factor(LOOCV_result_ggplotDF$Signatures)
+LOOCV_result_ggplotDF$MetricName <- factor(LOOCV_result_ggplotDF$MetricName)
+
+#ggplot
+ggplot(data = LOOCV_result_ggplotDF,aes(x=Signatures, y=MetricValue, fill=MetricName)) + geom_boxplot() + ggtitle("Comparion of TB signatures from 100 runs Leave-one-out cross-validation") + theme(plot.title = element_text(hjust = 0.5))
+
+ggsave("signatureComparison_ridge.pdf", width = 25, height = 20, units = "cm")
+
+
+
+```
+
+
+
+
+### Unsupervised Evaluation by TSNE {.tabset}
+
+1. Row-scaled Log2-trandformed normalized counts heatmap  
+2. Pearson correlation heatmap  
+3. PCA  
+4. t-SNE
+
+#### Kaforou 27 gene signature
+```{r message=FALSE}
+ggList <- plot_visualization(IndianData_final[Kaforou.27,], labelIndianData_final, dataName = "Kaforou 27 gene", log2Trans = TRUE, colorGroup = c(TB = "red", control = "green"), useLabel = FALSE, pdfOutput = TRUE)
+ggList[[1]]
+ggList[[2]]
+
+
+
+
+
+
+#final pdf output: heatmap and tsne
+
+plot_pheatmap(IndianData_final[Kaforou.27,], labelIndianData_final,colorGroup = c(TB = "red", control = "green"), title = "Row-scaled Log2-transformed Kaforou signature Heatmap", log2Trans = T, rowScaling = T, showColName = T, outputPDF = T, outputName = "Kaforou_heatmap.pdf", height = 8, width = 9)
+
+plot_tsne(IndianData_final[Kaforou.27,], labelIndianData_final,title = "Row-scaled Log2-transformed Kaforou signature Heatmap", outputPDF = TRUE, outputName = "Kaforou_tsne.pdf", height = 14, width = 16)
+
+
+```
+
+
+#### Zak 16 gene signature
+```{r message=FALSE}
+ggList <- plot_visualization(IndianData_final[zak2016_16gene,], labelIndianData_final, dataName = "zak 16 gene", log2Trans = TRUE, colorGroup = c(TB = "red", control = "green"), useLabel = FALSE, pdfOutput = TRUE)
+ggList[[1]]
+ggList[[2]]
+
+
+
+
+
+
+#final pdf output: heatmap and tsne
+
+plot_pheatmap(IndianData_final[zak2016_16gene,], labelIndianData_final,colorGroup = c(TB = "red", control = "green"), title = "Row-scaled Log2-transformed Zak signature Heatmap", log2Trans = T, rowScaling = T, showColName = F, outputPDF = T, outputName = "Zak_heatmap.pdf", height = 8, width = 9)
+
+plot_tsne(IndianData_final[zak2016_16gene,], labelIndianData_final,title = "Row-scaled Log2-transformed Zak signature Heatmap", outputPDF = TRUE, outputName = "Zak_tsne.pdf", height = 14, width = 16)
+
+
+```
+
+#### Jacobsen 3 gene signature
+```{r}
+ggList <- plot_visualization(IndianData_final[jacobsen2007_3gene,], labelIndianData_final, dataName = "jacobsen 3 gene", log2Trans = TRUE, colorGroup = c(TB = "red", control = "green"), useLabel = FALSE, pdfOutput = TRUE)
+ggList[[1]]
+ggList[[2]]
+
+#final pdf output: heatmap and tsne
+
+plot_pheatmap(IndianData_final[jacobsen2007_3gene,], labelIndianData_final,colorGroup = c(TB = "red", control = "green"), title = "Row-scaled Log2-transformed Jacobsen signature Heatmap", log2Trans = T, rowScaling = T, showColName = F, outputPDF = T, outputName = "Jacobsen_heatmap.pdf", height = 8, width = 9)
+
+plot_tsne(IndianData_final[jacobsen2007_3gene,], labelIndianData_final,title = "Row-scaled Log2-transformed Jacobsen signature Heatmap", outputPDF = TRUE, outputName = "Jacobsen_tsne.pdf", height = 14, width = 16)
+
+
+```
+
+
+
+
+#### sweeney 3 gene signature
+```{r message=FALSE}
+
+ggList <- plot_visualization(IndianData_final[sweeney2016_3gene,], labelIndianData_final, dataName = "sweeney 3 gene", log2Trans = TRUE, colorGroup = c(TB = "red", control = "green"), useLabel = FALSE, pdfOutput = TRUE)
+ggList[[1]]
+ggList[[2]]
+
+#final pdf output: heatmap and tsne
+
+plot_pheatmap(IndianData_final[sweeney2016_3gene,], labelIndianData_final,colorGroup = c(TB = "red", control = "green"), title = "Row-scaled Log2-transformed Sweeney signature Heatmap", log2Trans = T, rowScaling = T, showColName = F, outputPDF = T, outputName = "Sweeney_heatmap.pdf", height = 8, width = 9)
+
+plot_tsne(IndianData_final[sweeney2016_3gene,], labelIndianData_final,title = "Row-scaled Log2-transformed Sweeney signature Heatmap", outputPDF = TRUE, outputName = "Sweeney_tsne.pdf", height = 14, width = 16)
+
+```
+
+
+#### Berry 264 gene signature
+```{r}
+ggList <- plot_visualization(IndianData_final[berry2010_393gene_exist_overlap,], labelIndianData_final, dataName = "berry 264 gene", log2Trans = TRUE, colorGroup = c(TB = "red", control = "green"), useLabel = F, pdfOutput = T)
+ggList[[1]]
+ggList[[2]]
+
+#final pdf output: heatmap and tsne
+
+plot_pheatmap(IndianData_final[berry2010_393gene_exist_overlap,], labelIndianData_final,colorGroup = c(TB = "red", control = "green"), title = "Row-scaled Log2-transformed Berry-393 signature Heatmap", log2Trans = T, rowScaling = T, showColName = F, outputPDF = T, outputName = "Berry-393_heatmap.pdf", height = 8, width = 9)
+
+plot_tsne(IndianData_final[berry2010_393gene_exist_overlap,], labelIndianData_final,title = "Row-scaled Log2-transformed Berry-393 signature Heatmap", outputPDF = TRUE, outputName = "Berry-393_tsne.pdf", height = 14, width = 16)
+
+```
+
+
+#### Berry 65 gene signature
+```{r}
+ggList <- plot_visualization(IndianData_final[berry2010_86gene_exist,], labelIndianData_final, dataName = "berry 65 gene", log2Trans = TRUE, colorGroup = c(TB = "red", control = "green"), useLabel = F, pdfOutput = T)
+ggList[[1]]
+ggList[[2]]
+
+#final pdf output: heatmap and tsne
+
+plot_pheatmap(IndianData_final[berry2010_86gene_exist,], labelIndianData_final,colorGroup = c(TB = "red", control = "green"), title = "Row-scaled Log2-transformed Berry-86 signature Heatmap", log2Trans = T, rowScaling = T, showColName = F, outputPDF = T, outputName = "Berry-86_heatmap.pdf", height = 8, width = 9)
+
+plot_tsne(IndianData_final[berry2010_86gene_exist,], labelIndianData_final,title = "Row-scaled Log2-transformed Berry-86 signature Heatmap", outputPDF = TRUE, outputName = "Berry-86_tsne.pdf", height = 14, width = 16)
+
+```
+
+#### Indian 24 gene signature
+```{r}
+ggList <- plot_visualization(IndianData_final[signature.lasso.multiple,], labelIndianData_final, dataName = "Indian-lasso", log2Trans = TRUE, colorGroup = c(TB = "red", control = "green"), useLabel = F, pdfOutput = T)
+ggList[[1]]
+ggList[[2]]
+
+#final pdf output: heatmap and tsne
+
+plot_pheatmap(IndianData_final[signature.lasso.multiple,], labelIndianData_final,colorGroup = c(TB = "red", control = "green"), title = "Row-scaled Log2-transformed Indian-lasso signature Heatmap", log2Trans = T, rowScaling = T, showColName = F, outputPDF = T, outputName = "Indian-lasso_heatmap.pdf", height = 8, width = 9)
+
+plot_tsne(IndianData_final[signature.lasso.multiple,], labelIndianData_final,title = "Row-scaled Log2-transformed Indian-lasso signature Heatmap", outputPDF = TRUE, outputName = "Indian-lasso_tsne.pdf", height = 14, width = 16)
+
+```
+
+
+
+
+
+
+### LOO Jackknife AUC comparison with plotting
+```{r message=FALSE, warning=FALSE}
+dfList <- list(IndianData_final[zak2016_16gene,], IndianData_final[jacobsen2007_3gene,], IndianData_final[sweeney2016_3gene,], IndianData_final[berry2010_393gene_exist_overlap,],IndianData_final[berry2010_86gene_exist,])
+LOOAUC_multiple(dfList, labelIndianData_final_number)
+
+#"red", "blue", "green", "yellow", "black"
+signatureNameVec <- c("Zak-16", "Jacobsen-3", "Sweeney-3", "Berry-393", "Berry-86")
+pdf("LOO_ROC.pdf", height = 7)
+LOOAUC_simple_multiple(dfList, labelIndianData_final_number,signatureNameVec = signatureNameVec, xLegendLocation = 0.5, yLegendLocation = 0.25, title = "ROC from Leave-one-out cross-validation")
+dev.off()
+
+
+```
+
+
+
+
+
+
+
+## Fisher exact test for signature genes vs. DE genes
+> Test the enrichment of DE genes in public signatures separately
+
+```{r}
+FisherTestGeneListEnrichment <- function(signature.vec, DE.vec, all.vec){
+  len.signature.DE <- length(intersect(signature.vec, DE.vec))
+  len.signature.notDE <- length(signature.vec) - len.signature.DE
+  len.notSignature.DE <- length(DE.vec) - len.signature.DE
+  len.notSignature.notDE <- length(all.vec) - len.signature.DE - len.notSignature.DE - len.signature.notDE
+  fisher.mat <- matrix(c(len.signature.DE, len.signature.notDE, len.notSignature.DE, len.notSignature.notDE),
+                nrow = 2,
+                dimnames = list(DE = c("DE", "Not DE"), SIGNATURE = c("Signature", "Not signature")))
+  tmp <- fisher.test(fisher.mat, alternative = "greater")
+  print(tmp)
+  return(tmp)
+}
+
+# All gene (filtered)
+all.gene <- rownames(IndianData)
+
+# for DEG with padj < 1e-5
+DEG.1e5 <- DEG_list[[5]]
+
+# run fisher exact test for all signatrues
+sweeney.fisher.mat <- FisherTestGeneListEnrichment(sweeney2016_3gene, DEG.1e5, all.gene)
+jacobsen.fisher.mat <- FisherTestGeneListEnrichment(jacobsen2007_3gene, DEG.1e5, all.gene)
+zak.fisher.mat <- FisherTestGeneListEnrichment(zak2016_16gene, DEG.1e5, all.gene)
+berry393.fisher.mat <- FisherTestGeneListEnrichment(berry2010_393gene_exist_overlap, DEG.1e5, all.gene)
+berry86.fisher.mat <- FisherTestGeneListEnrichment(berry2010_86gene_exist, DEG.1e5, all.gene)
+
+
+
+
+
+# for DEG with padj < 1e-11
+DEG.1e11 <- DEG_list[[11]]
+
+# run fisher exact test for all signatrues
+sweeney.fisher.mat <- FisherTestGeneListEnrichment(sweeney2016_3gene, DEG.1e11, all.gene)
+jacobsen.fisher.mat <- FisherTestGeneListEnrichment(jacobsen2007_3gene, DEG.1e11, all.gene)
+zak.fisher.mat <- FisherTestGeneListEnrichment(zak2016_16gene, DEG.1e11, all.gene)
+berry393.fisher.mat <- FisherTestGeneListEnrichment(berry2010_393gene_exist_overlap, DEG.1e11, all.gene)
+berry86.fisher.mat <- FisherTestGeneListEnrichment(berry2010_86gene_exist, DEG.1e11, all.gene)
+kaforou.fisher.mat <- FisherTestGeneListEnrichment(Kaforou.27, DEG.1e11, all.gene)
+
+
+
+
+
+```
+
+
+
+## Lasso logistic regression
+> Get our own signature using lasso LR and DE genes (padj 1e-5)
+> Calculate the classification performance of our signature as the benchmark for best performance (obviously overfitting)  
+
+```{r}
+signature.lasso.multiple <- getSignatureFromMultipleGlmnet(dataFrame = IndianData_final[DEG.1e5,], targetVec = labelIndianData_final_number)
+
+
+
+
+# try get weights:
+train.tmp = as.data.frame(t(as.matrix(IndianData_final[which(rownames(IndianData_final) %in% signature.lasso.multiple),])))
+train.tmp[,25] <- labelIndianData_final_number
+colnames(train.tmp)[25] <- "label"
+
+model <- glm(label ~.,family=binomial(link='logit'),data=train.tmp)
+```
+
+
+
+### LOO Jackknife AUC comparison with plotting
+```{r message=FALSE, warning=FALSE}
+dfList <- list(IndianData_final[zak2016_16gene,], IndianData_final[jacobsen2007_3gene,], IndianData_final[sweeney2016_3gene,], IndianData_final[berry2010_393gene_exist_overlap,],IndianData_final[berry2010_86gene_exist,], IndianData_final[signature.lasso.multiple,])
+
+#"red", "blue", "green", "yellow", "black"
+signatureNameVec <- c("Zak-16", "Jacobsen-3", "Sweeney-3", "Berry-393", "Berry-86", "Indian-lasso")
+pdf("LOO_ROC_updated.pdf", height = 7)
+LOOAUC_simple_multiple(dfList, labelIndianData_final_number,signatureNameVec = signatureNameVec, xLegendLocation = 0.5, yLegendLocation = 0.25, title = "ROC from Leave-one-out cross-validation")
+dev.off()
+
+
+```
+
+### train random 16 gene from Berry 393
+### run 1000 times, 95% confidance area.
+```{r}
+require(lsr)
+dfList.berry.1000 <- list()
+for(i in 1:1000){
+  dfList.berry.1000[[i]] <- IndianData_final[berry2010_393gene_exist_overlap[sample(1:length(berry2010_393gene_exist_overlap), 16, replace = F)],]
+}
+
+auc.vec.berry.16.1000 <- LOOAUC_simple_multiple_noplot(dfList.berry.1000, labelIndianData_final_number)
+ci(auc.vec.berry.16.1000)
+boxplot(auc.vec.berry.16.1000, main = "Random 16 genes from Berry-393: AUC")
+### New method
+
+
+
+```
+# train a 16 gene and a 65 gene signature from Berry 393  using lasso
+# And compare the AUC
+```{r}
+
+signature.berry393.lessgene <- getSignatureFromMultipleGlmnet(dataFrame = IndianData_final[berry2010_393gene_exist_overlap,], targetVec = labelIndianData_final_number)
+
+dfList <- list(IndianData_final[zak2016_16gene,], IndianData_final[jacobsen2007_3gene,], IndianData_final[sweeney2016_3gene,], IndianData_final[berry2010_393gene_exist_overlap,],IndianData_final[berry2010_86gene_exist,], IndianData_final[signature.lasso.multiple,], IndianData_final[signature.berry393.lessgene,])
+
+#"red", "blue", "green", "yellow", "black"
+signatureNameVec <- c("Zak-16", "Jacobsen-3", "Sweeney-3", "Berry-393", "Berry-86", "Indian-lasso", "Berry-393-18")
+pdf("LOO_ROC_with_Berry_393_18gene.pdf", height = 7)
+LOOAUC_simple_multiple(dfList, labelIndianData_final_number,signatureNameVec = signatureNameVec, xLegendLocation = 0.5, yLegendLocation = 0.25, title = "ROC from Leave-one-out cross-validation")
+dev.off()
+
+```
+
+
+
+```{r}
+
+#overlap with 1e-5
+zak.overlap5 <- zak2016_16gene[zak2016_16gene %in% DEG.1e5]
+sweeney.overlap5 <- sweeney2016_3gene[sweeney2016_3gene %in% DEG.1e5]
+jacobsen.overlap5 <- jacobsen2007_3gene[jacobsen2007_3gene %in% DEG.1e5]
+berry393.overlap5 <- berry2010_393gene_exist_overlap[berry2010_393gene_exist_overlap %in% DEG.1e5]
+berry86.overlap5 <- berry2010_86gene_exist[berry2010_86gene_exist %in% DEG.1e5]
+length(zak.overlap5)
+length(sweeney.overlap5)
+length(jacobsen.overlap5)
+length(berry393.overlap5)
+length(berry86.overlap5)
+
+# overlap with 1e-11
+zak.overlap <- zak2016_16gene[zak2016_16gene %in% DEG.1e11]
+sweeney.overlap <- sweeney2016_3gene[sweeney2016_3gene %in% DEG.1e11]
+jacobsen.overlap <- jacobsen2007_3gene[jacobsen2007_3gene %in% DEG.1e11]
+berry393.overlap <- berry2010_393gene_exist_overlap[berry2010_393gene_exist_overlap %in% DEG.1e11]
+berry86.overlap <- berry2010_86gene_exist[berry2010_86gene_exist %in% DEG.1e11]
+length(zak.overlap)
+length(sweeney.overlap)
+length(jacobsen.overlap)
+length(berry393.overlap)
+length(berry86.overlap)
+zak.overlap
+sweeney.overlap
+jacobsen.overlap
+berry393.overlap
+berry86.overlap
+```
+
+
+
+
+
+
+Overlap between Berry and DEGs
+```{r}
+length(intersect(berry2010_393gene_exist_overlap, DEG_list[[2]]))
+211/length(berry2010_393gene_exist_overlap)
+```
+
+
+
+# compare Another signature
+```{r}
+Kaforou.27 <- read.table("../data/27-gene signature", stringsAsFactors = F)
+Kaforou.27 <- Kaforou.27$V1
+Kaforou.27[11] <- "FAM198B"
+#https://www.ncbi.nlm.nih.gov/gene/728744
+# "LOC728744" can't be mapped! WE have only 26 genes here!
+Kaforou.27 <- Kaforou.27[-19]
+
+
+
+
+```
+
+
+
+CI for AUC
+```{r}
+dfList <- list(IndianData_final[zak2016_16gene,], IndianData_final[jacobsen2007_3gene,], IndianData_final[sweeney2016_3gene,], IndianData_final[berry2010_393gene_exist_overlap,],IndianData_final[berry2010_86gene_exist,], IndianData_final[signature.lasso.multiple,], IndianData_final[Kaforou.27,])
+
+signatureNameVec <- c("Zak-16", "Jacobsen-3", "Sweeney-3", "Berry-393", "Berry-86", "Indian-lasso", "Kaforou-27")
+
+auc.result <- list()
+auc.result.ci <- list()
+for(i in 1:length(dfList)){
+  auc.vec.tmp <- Bootstrap_LOOCV_LR_AUC(dfList[[i]], labelIndianData_final_number, nboot = 100)
+  auc.result[[i]] <- auc.vec.tmp
+  auc.result.ci[[i]] <- ci(auc.vec.tmp)
+  names(auc.result)[i] <- signatureNameVec[i]
+  names(auc.result.ci)[i] <- signatureNameVec[i]
+}
+
+auc.result.order <- list()
+auc.result.order[[1]] <- auc.result[[2]]
+auc.result.order[[2]] <- auc.result[[3]]
+auc.result.order[[3]] <- auc.result[[7]]
+auc.result.order[[4]] <- auc.result[[1]]
+auc.result.order[[5]] <- auc.result[[5]]
+auc.result.order[[6]] <- auc.result[[6]]
+auc.result.order[[7]] <- auc.result[[4]]
+names(auc.result.order) <- c("Jacobsen-3", "Sweeney-3", "Kaforou-27", "Zak-16", "Berry-86", "Indian-lasso","Berry-393")
+
+boxplot(auc.result.order, main = "Quantitative evaluation of signatures: AUC")
+
+```
+
+
+
+
+
+
+# test indian signature in Berry train set
+```{r}
+require("illuminaHumanv4.db")
+
+
+# 1: PTB, 0: Latent, 2: healthy
+berry.train.label <- c(0,	1,	2,	1,	0,	2,	2,	0,	1,	2,	0,	1,	0,	0,	2,	1,	0,	2,	1,	0,	1,	0,	1,	0,	1,	0,	1,	1,	0,	2,	1,	2,	2,	2,	0,	2,	0,	1,	0,	2,	0,	0)
+
+
+#read in data
+berry.train.data <- read.table("../data/GSE19439_series_matrix.txt", stringsAsFactors = F, header = T)
+
+
+
+# Map illumina probe id to gene symble
+row.keep.index <- c()
+for ( i in 1:nrow(berry.train.data)){
+  cc <- try(as.character(unlist(mget(x = berry.train.data$ID_REF[i],envir = illuminaHumanv4SYMBOL))), silent=T)
+  if(!is(cc,"try-error")) {row.keep.index <- c(row.keep.index, i)}
+}
+
+# gene name (duplicated)
+berry.gene.name <- as.character(unlist(mget(x = berry.train.data$ID_REF[row.keep.index],envir = illuminaHumanv4SYMBOL)))
+# reformat
+berry.train.data <- berry.train.data[row.keep.index,-1]
+
+# remove control samples, keep only PTB and latent TB
+sample.keep.index <- which(berry.train.label != 2)
+berry.train.label <- berry.train.label[sample.keep.index]
+berry.train.data <- berry.train.data[,sample.keep.index]
+
+# remove NA
+berry.gene.name <- berry.gene.name[which(complete.cases(berry.train.data))]
+berry.train.data <- berry.train.data[which(complete.cases(berry.train.data)),]
+
+berry.train.data <- berry.train.data[which(!is.na(berry.gene.name)),]
+berry.gene.name <- berry.gene.name[which(!is.na(berry.gene.name))]
+
+
+# combine duplicated gene counts to one single gene row
+gene.count.list <- list()
+for (i in 1:length(berry.gene.name)){
+  gene.tmp <- berry.gene.name[i]
+  if (gene.tmp %in% names(gene.count.list)){
+    gene.count.list[[gene.tmp]] <- gene.count.list[[gene.tmp]] + berry.train.data[i,]
+  } else{
+    gene.count.list[[gene.tmp]] <- berry.train.data[i,]
+  }
+  #print(i)
+}
+
+# get a new dataframe
+berry.gene.name.unique <- names(gene.count.list)
+berry.train.data.unique <- NULL
+for (i in 1:length(berry.gene.name.unique)){
+  berry.train.data.unique <- rbind(berry.train.data.unique, gene.count.list[[paste(berry.gene.name.unique[i])]])
+}
+
+# evaluate lasso-16 on
+  signature.lasso.multiple.berry <- signature.lasso.multiple[which(signature.lasso.multiple %in% berry.gene.name.unique)]
+
+berry.indian.signature.data <- berry.train.data.unique[which(berry.gene.name.unique %in% signature.lasso.multiple.berry),]
+
+berry.berry.signature.data <- berry.train.data.unique[which(berry.gene.name.unique %in% berry2010_393gene_exist_overlap),]
+
+
+auc.berry.indian.signature <- Bootstrap_LOOCV_LR_AUC(berry.indian.signature.data, berry.train.label, nboot = 100)
+ci(auc.berry.indian.signature)
+
+auc.berry.berry.signature <- Bootstrap_LOOCV_LR_AUC(berry.berry.signature.data, berry.train.label, nboot = 100)
+ci(auc.berry.berry.signature)
+
+
+```
+
+
+
+
+#### overlap between Berry 393 and DEG
+```{r}
+berry.393.264.DEG.1en1 <- intersect(berry2010_393gene_exist_overlap, DEG_list[[1]])
+berry.393.264.DEG.1en1.padj <- resIndianOrdered$padj[match(berry.393.264.DEG.1en1, rownames(resIndianOrdered))]
+
+length(berry.393.264.DEG.1en1)
+summary(berry.393.264.DEG.1en1.padj)
+
+
+
+
+
+
+```
+
+
+#### sensitivity and specificity and AUC =.=
+
+```{r}
+dfList <- list(IndianData_final[zak2016_16gene,], IndianData_final[jacobsen2007_3gene,], IndianData_final[sweeney2016_3gene,], IndianData_final[berry2010_393gene_exist_overlap,],IndianData_final[berry2010_86gene_exist,], IndianData_final[signature.lasso.multiple,], IndianData_final[Kaforou.27,])
+
+signatureNameVec <- c("Zak-16", "Jacobsen-3", "Sweeney-3", "Berry-393", "Berry-86", "Indian-lasso", "Kaforou-27")
+
+auc.result <- list()
+auc.result.ci <- list()
+sensitivity.ci <- list()
+specificity.ci <- list()
+for(i in 1:length(dfList)){
+  boot.output.list <- Bootstrap_LOOCV_LR_AUC(dfList[[i]], labelIndianData_final_number, nboot = 100)
+
+  #auc
+  auc.result[[i]] <- boot.output.list[[1]]
+  auc.result.ci[[i]] <- ci(auc.vec.tmp)
+  names(auc.result)[i] <- signatureNameVec[i]
+  names(auc.result.ci)[i] <- signatureNameVec[i]
+
+  # sensitivity
+  sensitivity.ci[[i]] <- ci(boot.output.list[[2]]$Sensitivity)
+  names(sensitivity.ci)[i] <- signatureNameVec[i]
+
+  # specificity
+  specificity.ci[[i]] <- ci(boot.output.list[[2]]$Specificity)
+  names(specificity.ci)[i] <- signatureNameVec[i]
+}
+
+auc.result.order <- list()
+auc.result.order[[1]] <- auc.result[[2]]
+auc.result.order[[2]] <- auc.result[[3]]
+auc.result.order[[3]] <- auc.result[[7]]
+auc.result.order[[4]] <- auc.result[[1]]
+auc.result.order[[5]] <- auc.result[[5]]
+auc.result.order[[6]] <- auc.result[[6]]
+auc.result.order[[7]] <- auc.result[[4]]
+names(auc.result.order) <- c("Jacobsen-3", "Sweeney-3", "Kaforou-27", "Zak-16", "Berry-86", "Indian-lasso","Berry-393")
+
+boxplot(auc.result.order, main = "Quantitative evaluation of signatures: AUC")
+
+
+
+# output df instead of list
+df.sensitivity.ci <- data.frame(matrix(unlist(sensitivity.ci), nrow=length(sensitivity.ci), byrow=T))
+colnames(df.sensitivity.ci) <- names(sensitivity.ci$`Zak-16`)
+rownames(df.sensitivity.ci) <- signatureNameVec
+
+df.specificity.ci <- data.frame(matrix(unlist(specificity.ci), nrow=length(specificity.ci), byrow=T))
+colnames(df.specificity.ci) <- names(specificity.ci$`Zak-16`)
+rownames(df.specificity.ci) <- signatureNameVec
+
+write.csv(df.sensitivity.ci, "../df_sensitivity.csv")
+write.csv(df.specificity.ci, "../df_specificity.csv")
+
+```
