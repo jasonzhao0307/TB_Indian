@@ -2,7 +2,7 @@
 
 This is the github repo storing code and results for our TB Indian project. 
 
-Author:  Jasooooon 
+Author:  Jason 
 
 ### Data
 * data.zip could be downloaded from XXX website. 
