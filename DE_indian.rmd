@@ -69,7 +69,7 @@ require(readr)
 library(R.utils)
 require(boot)
 require(gmodels)
-sourceDirectory("../../R_lib_jason/", modifiedOnly=TRUE)
+sourceDirectory("~/Google Drive File Stream/My Drive/projects/R_lib_jason/", modifiedOnly=TRUE)
 ```
 
 
@@ -90,7 +90,8 @@ berry2010_393gene <- tmp$V1
 tmp <- read.table("../data/tmp2.txt", header = F, stringsAsFactors = F)
 berry2010_86gene <- tmp$V1
 zak2016_16gene <- c('ANKRD22','APOL1','BATF2','ETV7','FCGR1A','FCGR1B','GBP1','GBP2','GBP4','GBP5','SCARF1','SEPT4','SERPING1','STAT1','TAP1','TRAFD1')
-
+maertzdorf_4gene <- c("GBP1", "ID3", "P2RY14", "IFITM3")
+sambarey_10gene <- c("FCGR1A", "HK3", "RAB13", "RBBP8", "IFI44L", "TIMM10", "BCL6", "SMARCD3", "CYP4F3", "SLPI")
 
 #Differential Expression
 
@@ -398,6 +399,10 @@ zak2016_16gene_vec <- c()
 berry2010_393gene_vec <- c()
 berry2010_86gene_vec <- c()
 kaforou_27gene_vec <- c()
+maertzdorf_4gene_vec <- c()
+sambarey_10gene_vec <- c()
+
+
 
 jacobsen2007_3gene_list <- list()
 sweeney2016_3gene_list <- list()
@@ -405,6 +410,9 @@ zak2016_16gene_list <- list()
 berry2010_393gene_list <- list()
 berry2010_86gene_list <- list()
 kaforou_27gene_list <- list()
+maertzdorf_4gene_list <- c()
+sambarey_10gene_list <- c()
+
 
 DEG_list <- list()
 
@@ -420,7 +428,10 @@ for (i in 1:n) {
   berry2010_393gene_list[[i]] <- intersect(DEG_tmp, berry2010_393gene)
   berry2010_86gene_list[[i]] <- intersect(DEG_tmp, berry2010_86gene)
   kaforou_27gene_list[[i]] <- intersect(DEG_tmp, Kaforou.27)
-
+  maertzdorf_4gene_list[[i]] <- intersect(DEG_tmp, maertzdorf_4gene)
+  sambarey_10gene_list[[i]] <- intersect(DEG_tmp, sambarey_10gene)
+  
+  
   DEG_list[[i]] <- DEG_tmp
   write.table(DEG_tmp, file = paste("../data/DEG", i, ".txt", sep = "-"), row.names = F, col.names = F)
 
@@ -430,11 +441,13 @@ for (i in 1:n) {
   berry2010_393gene_vec <- c(berry2010_393gene_vec, length(intersect(DEG_tmp, berry2010_393gene))/266)
   berry2010_86gene_vec <- c(berry2010_86gene_vec, length(intersect(DEG_tmp, berry2010_86gene))/65)
   kaforou_27gene_vec <- c(kaforou_27gene_vec, length(intersect(DEG_tmp, Kaforou.27))/24)
+  maertzdorf_4gene_vec <- c(maertzdorf_4gene_vec, length(intersect(DEG_tmp, maertzdorf_4gene))/4)
+  sambarey_10gene_vec <- c(sambarey_10gene_vec, length(intersect(DEG_tmp, sambarey_10gene))/10)
 }
 
-percentage <- c(jacobsen2007_3gene_vec, sweeney2016_3gene_vec, zak2016_16gene_vec, berry2010_393gene_vec, berry2010_86gene_vec, kaforou_27gene_vec)
-name <- c(rep("Jacobsen 3gene",n), rep("Sweeney 3genes",n), rep("Zak 16genes",n), rep("Berry 393genes",n), rep("Berry 86genes",n), rep("Kaforou 27genes",n))
-cutoff <- c(rep(1:n, 6))
+percentage <- c(jacobsen2007_3gene_vec, sweeney2016_3gene_vec, zak2016_16gene_vec, berry2010_393gene_vec, berry2010_86gene_vec, kaforou_27gene_vec, maertzdorf_4gene_vec, sambarey_10gene_vec)
+name <- c(rep("Jacobsen 3gene",n), rep("Sweeney 3genes",n), rep("Zak 16genes",n), rep("Berry 393genes",n), rep("Berry 86genes",n), rep("Kaforou 27genes",n), rep("Maertzdorf 4gene",n), rep("Sambarey 10genes",n))
+cutoff <- c(rep(1:n, 8))
 df_percent <- data.frame(percentage, name, cutoff)
 
 
@@ -687,6 +700,48 @@ ggsave("signatureComparison_ridge.pdf", width = 25, height = 20, units = "cm")
 3. PCA  
 4. t-SNE
 
+
+#### Maertzdorf 4 gene signature
+```{r message=FALSE}
+ggList <- plot_visualization(IndianData_final[maertzdorf_4gene,], labelIndianData_final, dataName = "Maertzdorf 4 gene", log2Trans = TRUE, colorGroup = c(TB = "red", control = "green"), useLabel = FALSE, pdfOutput = TRUE)
+ggList[[1]]
+ggList[[2]]
+
+
+
+
+
+
+#final pdf output: heatmap and tsne
+
+plot_pheatmap(IndianData_final[maertzdorf_4gene,], labelIndianData_final,colorGroup = c(TB = "red", control = "green"), title = "Row-scaled Log2-transformed Maertzdorf signature Heatmap", log2Trans = T, rowScaling = T, showColName = T, outputPDF = T, outputName = "Maertzdorf_heatmap.pdf", height = 8, width = 9)
+
+plot_tsne(IndianData_final[maertzdorf_4gene,], labelIndianData_final,title = "Row-scaled Log2-transformed Maertzdorf signature Heatmap", outputPDF = TRUE, outputName = "Maertzdorf_tsne.pdf", height = 14, width = 16)
+
+
+```
+
+
+#### Sambarey 10 gene signature
+```{r message=FALSE}
+ggList <- plot_visualization(IndianData_final[sambarey_10gene,], labelIndianData_final, dataName = "Sambarey 10 gene", log2Trans = TRUE, colorGroup = c(TB = "red", control = "green"), useLabel = FALSE, pdfOutput = TRUE)
+ggList[[1]]
+ggList[[2]]
+
+
+
+
+
+
+#final pdf output: heatmap and tsne
+
+plot_pheatmap(IndianData_final[sambarey_10gene,], labelIndianData_final,colorGroup = c(TB = "red", control = "green"), title = "Row-scaled Log2-transformed Sambarey signature Heatmap", log2Trans = T, rowScaling = T, showColName = T, outputPDF = T, outputName = "Sambarey_heatmap.pdf", height = 8, width = 9)
+
+plot_tsne(IndianData_final[sambarey_10gene,], labelIndianData_final,title = "Row-scaled Log2-transformed Sambarey signature Heatmap", outputPDF = TRUE, outputName = "Sambarey_tsne.pdf", height = 14, width = 16)
+
+
+```
+
 #### Kaforou 27 gene signature
 ```{r message=FALSE}
 ggList <- plot_visualization(IndianData_final[Kaforou.27,], labelIndianData_final, dataName = "Kaforou 27 gene", log2Trans = TRUE, colorGroup = c(TB = "red", control = "green"), useLabel = FALSE, pdfOutput = TRUE)
@@ -874,6 +929,8 @@ zak.fisher.mat <- FisherTestGeneListEnrichment(zak2016_16gene, DEG.1e11, all.gen
 berry393.fisher.mat <- FisherTestGeneListEnrichment(berry2010_393gene_exist_overlap, DEG.1e11, all.gene)
 berry86.fisher.mat <- FisherTestGeneListEnrichment(berry2010_86gene_exist, DEG.1e11, all.gene)
 kaforou.fisher.mat <- FisherTestGeneListEnrichment(Kaforou.27, DEG.1e11, all.gene)
+maertzdorf.fisher.mat <- FisherTestGeneListEnrichment(maertzdorf_4gene, DEG.1e11, all.gene)
+sambarey.fisher.mat <- FisherTestGeneListEnrichment(sambarey_10gene, DEG.1e11, all.gene)
 
 
 
@@ -1014,16 +1071,16 @@ Kaforou.27 <- Kaforou.27[-19]
 
 CI for AUC
 ```{r}
-dfList <- list(IndianData_final[zak2016_16gene,], IndianData_final[jacobsen2007_3gene,], IndianData_final[sweeney2016_3gene,], IndianData_final[berry2010_393gene_exist_overlap,],IndianData_final[berry2010_86gene_exist,], IndianData_final[signature.lasso.multiple,], IndianData_final[Kaforou.27,])
+dfList <- list(IndianData_final[zak2016_16gene,], IndianData_final[jacobsen2007_3gene,], IndianData_final[sweeney2016_3gene,], IndianData_final[berry2010_393gene_exist_overlap,],IndianData_final[berry2010_86gene_exist,], IndianData_final[signature.lasso.multiple,], IndianData_final[Kaforou.27,], IndianData_final[maertzdorf_4gene,], IndianData_final[sambarey_10gene,])
 
-signatureNameVec <- c("Zak-16", "Jacobsen-3", "Sweeney-3", "Berry-393", "Berry-86", "Indian-lasso", "Kaforou-27")
+signatureNameVec <- c("Zak-16", "Jacobsen-3", "Sweeney-3", "Berry-393", "Berry-86", "Indian-lasso", "Kaforou-27", "Maertzdorf-4", "Sambarey-10")
 
 auc.result <- list()
 auc.result.ci <- list()
 for(i in 1:length(dfList)){
   auc.vec.tmp <- Bootstrap_LOOCV_LR_AUC(dfList[[i]], labelIndianData_final_number, nboot = 100)
   auc.result[[i]] <- auc.vec.tmp
-  auc.result.ci[[i]] <- ci(auc.vec.tmp)
+  auc.result.ci[[i]] <- ci(auc.vec.tmp$auc)
   names(auc.result)[i] <- signatureNameVec[i]
   names(auc.result.ci)[i] <- signatureNameVec[i]
 }
@@ -1141,12 +1198,13 @@ summary(berry.393.264.DEG.1en1.padj)
 ```
 
 
-#### sensitivity and specificity and AUC =.=
+#### sensitivity and specificity and AUC
+# update: add sambarey and Maertzdorf signature, 01/03/2018
 
 ```{r}
-dfList <- list(IndianData_final[zak2016_16gene,], IndianData_final[jacobsen2007_3gene,], IndianData_final[sweeney2016_3gene,], IndianData_final[berry2010_393gene_exist_overlap,],IndianData_final[berry2010_86gene_exist,], IndianData_final[signature.lasso.multiple,], IndianData_final[Kaforou.27,])
+dfList <- list(IndianData_final[zak2016_16gene,], IndianData_final[jacobsen2007_3gene,], IndianData_final[sweeney2016_3gene,], IndianData_final[berry2010_393gene_exist_overlap,],IndianData_final[berry2010_86gene_exist,], IndianData_final[signature.lasso.multiple,], IndianData_final[Kaforou.27,], IndianData_final[maertzdorf_4gene,], IndianData_final[sambarey_10gene,])
 
-signatureNameVec <- c("Zak-16", "Jacobsen-3", "Sweeney-3", "Berry-393", "Berry-86", "Indian-lasso", "Kaforou-27")
+signatureNameVec <- c("Zak-16", "Jacobsen-3", "Sweeney-3", "Berry-393", "Berry-86", "Indian-lasso", "Kaforou-27", "Maertzdorf-4", "Sambarey-10")
 
 auc.result <- list()
 auc.result.ci <- list()
@@ -1173,15 +1231,18 @@ for(i in 1:length(dfList)){
 auc.result.order <- list()
 auc.result.order[[1]] <- auc.result[[2]]
 auc.result.order[[2]] <- auc.result[[3]]
-auc.result.order[[3]] <- auc.result[[7]]
-auc.result.order[[4]] <- auc.result[[1]]
-auc.result.order[[5]] <- auc.result[[5]]
-auc.result.order[[6]] <- auc.result[[6]]
-auc.result.order[[7]] <- auc.result[[4]]
-names(auc.result.order) <- c("Jacobsen-3", "Sweeney-3", "Kaforou-27", "Zak-16", "Berry-86", "Indian-lasso","Berry-393")
+auc.result.order[[3]] <- auc.result[[8]]
+auc.result.order[[4]] <- auc.result[[9]]
+auc.result.order[[5]] <- auc.result[[1]]
+auc.result.order[[6]] <- auc.result[[5]]
+auc.result.order[[7]] <- auc.result[[7]]
+auc.result.order[[8]] <- auc.result[[4]]
+auc.result.order[[9]] <- auc.result[[6]]
+names(auc.result.order) <- c("Jacobsen-3", "Sweeney-3", "Maertzdorf-4", "Sambarey-10", "Zak-16", "Berry-86", "Kaforou-27","Berry-393","Indian-lasso")
 
+pdf("boxplot.pdf", width = 13, height = 8)
 boxplot(auc.result.order, main = "Quantitative evaluation of signatures: AUC")
-
+dev.off()
 
 
 # output df instead of list
@@ -1195,5 +1256,5 @@ rownames(df.specificity.ci) <- signatureNameVec
 
 write.csv(df.sensitivity.ci, "../df_sensitivity.csv")
 write.csv(df.specificity.ci, "../df_specificity.csv")
-
+saveRDS(list(jacobsen = jacobsen2007_3gene, sweeney = sweeney2016_3gene, berry.393 = berry2010_393gene_exist_overlap, berry.86 = berry2010_86gene_exist, kaforou.27 = Kaforou.27), "../tb.signature.rds")
 ```
