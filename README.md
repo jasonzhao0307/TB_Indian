@@ -1,17 +1,15 @@
 # TB_Indian
+This is the github repo storing code for the following paper:
 
-This is the github repo storing code and results for our TB Indian project. 
+Leong S*, Zhao Y*, Joseph NM, Hochberg NS, Sarkar S, Pleskunas J, Hom
+D, Lakshminarayanan S, Horsburgh Jr. CR, Roy G, Ellner JJ, Johnson WE, Salgame P, Existing blood
+transcriptional classifiers accurately discriminate active tuberculosis from latent infection in individuals
+from south India, Tuberculosis (2018), doi: 10.1016/j.tube.2018.01.002.
+(http://www.tuberculosisjournal.com/article/S1472-9792(17)30333-5/)
 
-Author:  Jason 
+\*Equal contribution
+
 
 ### Data
-* data.zip could be downloaded from XXX website. 
+* data.zip could be downloaded from https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE101705. 
 
-### Notice
-* All data and .RData files are in the parent folder of this github folder. 
-* To run the code: 
-	* Create a empty folder F. 
-	* Download the data from XXX to F/data
-	* Download code from github to F/TB_Indian
-	* Load RData by: load("../TBI.RData")
-	* Do not save .RData in the F/TB_Indian as asked when leaving (default setting). Before leaving the working environment, do: save.image("../TBI.RData")
